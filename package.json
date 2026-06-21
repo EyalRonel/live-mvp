@@ -1,0 +1,20 @@
+{
+  "name": "live-mvp",
+  "version": "1.0.0",
+  "description": "Minimal voice agent that joins a Google Meet via MeetingBaaS and talks using the OpenAI Realtime API",
+  "main": "index.ts",
+  "scripts": {
+    "start": "ts-node index.ts"
+  },
+  "dependencies": {
+    "@ngrok/ngrok": "^1.4.1",
+    "dotenv": "^16.4.5",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  }
+}
