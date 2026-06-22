@@ -16,6 +16,8 @@ import { VoiceTransport, AudioFormat } from "../../core/voice-transport";
 export class CallTransport extends EventEmitter implements VoiceTransport {
   readonly format: AudioFormat = { kind: "pcmu", rate: 8000 };
   private streamSid?: string;
+  /** Caller number, from the TwiML <Parameter>/callSid (set on "start"). */
+  caller = "caller";
 
   constructor(private ws: WebSocket) {
     super();
@@ -29,6 +31,8 @@ export class CallTransport extends EventEmitter implements VoiceTransport {
       switch (msg.event) {
         case "start":
           this.streamSid = msg.start?.streamSid || msg.streamSid;
+          this.caller =
+            msg.start?.customParameters?.caller || msg.start?.callSid || "caller";
           this.emit("connected");
           break;
         case "media":

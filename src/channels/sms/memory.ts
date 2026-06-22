@@ -1,4 +1,4 @@
-import { Msg } from "../../services/openai/text-agent";
+import { Msg } from "../../agent/brain";
 
 // Per-sender conversation history, in-process only (lost on restart — fine for MVP).
 const MAX_TURNS = 6; // keep the last N messages per sender

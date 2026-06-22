@@ -2,8 +2,8 @@ import http from "http";
 import { WebSocketServer } from "ws";
 import { requireEnv } from "../../shared/config";
 import { startTunnel } from "../../shared/tunnel";
-import { buildSystemPrompt } from "../../shared/persona";
 import { bridge } from "../../core/bridge";
+import { respond } from "../../agent/brain";
 import { RealtimeAgent } from "../../services/openai/realtime-agent";
 import { setVoiceWebhook, placeCall } from "../../services/twilio/client";
 import { connectStreamTwiml } from "../../services/twilio/twiml";
@@ -24,8 +24,14 @@ async function main() {
   // HTTP server: serves the TwiML voice webhook; upgrades /media to a WebSocket.
   const server = http.createServer((req, res) => {
     if (req.method === "POST" && req.url?.startsWith("/voice")) {
-      res.writeHead(200, { "Content-Type": "text/xml" });
-      res.end(connectStreamTwiml(mediaWsUrl));
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        // Twilio posts the caller's number as `From`; pass it to the media stream.
+        const from = new URLSearchParams(body).get("From") || undefined;
+        res.writeHead(200, { "Content-Type": "text/xml" });
+        res.end(connectStreamTwiml(mediaWsUrl, from));
+      });
       return;
     }
     res.writeHead(404);
@@ -46,11 +52,12 @@ async function main() {
     const transport = new CallTransport(ws);
     transport.on("error", (e) => console.error("Call socket error:", e));
     transport.once("connected", async () => {
-      console.log("Call connected, starting conversation");
+      console.log(`Call connected (${transport.caller}), starting conversation`);
       const agent = new RealtimeAgent({
-        instructions: buildSystemPrompt("phone"),
+        respond, // the shared brain
+        channel: "phone",
+        from: transport.caller,
         audioFormat: { kind: "pcmu", rate: 8000 },
-        voice: "alloy",
         greetOnReady: true, // natural conversation; agent greets the caller first
       });
       try {

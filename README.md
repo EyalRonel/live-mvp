@@ -16,6 +16,8 @@ OpenAI's: PCM16/24 kHz for Meet, G.711 μ-law/8 kHz for phone).
 
 ```
 src/
+  agent/             # YOUR AGENT — one function every channel routes through
+    brain.ts         respond(userText, ctx) -> reply text
   channels/          # one folder per channel — the entry points you run
     google-meet/     index.ts + meet-transport.ts
     phone-call/      index.ts + call-transport.ts
@@ -23,13 +25,32 @@ src/
   services/          # reusable provider integrations
     twilio/          client (REST), media-stream framing, messaging, twiml   (phone + sms)
     meetingbaas/     client (REST) + audio-socket (WS server)                (meet)
-    openai/          realtime-agent (voice) + text-agent (sms)               (all)
+    openai/          realtime-agent (voice STT+TTS)                          (meet + phone)
   core/              voice-transport (interface) + bridge (wires audio)
   shared/            persona, config, tunnel
 ```
 
 To understand a channel, open `channels/<x>/index.ts`; the provider mechanics it
 calls live under `services/`. Adding a channel = a new `channels/<name>/` folder.
+
+## Writing your own agent
+
+All channels are just **rails** that feed one function:
+
+```ts
+// src/agent/brain.ts
+export async function respond(userText: string, ctx: ConversationContext): Promise<string>
+```
+
+`ctx` is `{ channel: "meet" | "phone" | "sms", from, history }`. Whatever you return
+is **spoken** on voice calls and **texted** on SMS. Replace the default body (a plain
+OpenAI chat completion) with your own logic — tools, RAG, another model — and every
+channel uses it, no plumbing changes.
+
+For voice, OpenAI Realtime is used purely as **ears (speech-to-text) + mouth
+(text-to-speech)**: it transcribes the caller, your `respond()` decides the reply,
+and Realtime speaks it back (verbatim). Meet still gates on the wake word; phone
+greets and converses naturally. Barge-in cancels the in-flight reply.
 
 ## Setup
 
@@ -83,11 +104,11 @@ Inbound mode keeps short per-sender memory so follow-ups have context.
 ## How a voice channel works
 
 ```
-caller/meeting ─audio─▶ transport ─appendAudio─▶ OpenAI Realtime   (uplink: human → AI)
-caller/meeting ◀─audio─ transport ◀────audio──── OpenAI Realtime   (downlink: AI → human)
+caller ─audio─▶ transport ─▶ Realtime (STT) ─▶ respond() ─▶ Realtime (TTS) ─▶ transport ─▶ caller
 ```
 
 A `VoiceTransport` (Meet or Twilio) carries audio frames; `bridge(transport, agent)`
 wires both directions plus barge-in and teardown. The same `RealtimeAgent` powers
-Meet and phone — only its config differs (audio format, wake-word vs. natural,
-greeting). See `src/core/`.
+Meet and phone — it transcribes the caller, calls the shared `respond()` brain, and
+speaks the reply. Only its config differs (audio format, wake-word vs. natural,
+greeting). See `src/core/` and `src/agent/brain.ts`.

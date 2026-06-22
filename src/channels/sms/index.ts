@@ -3,7 +3,7 @@ import { requireEnv } from "../../shared/config";
 import { startTunnel } from "../../shared/tunnel";
 import { setSmsWebhook, sendSms } from "../../services/twilio/client";
 import { parseInboundSms, messageTwiml } from "../../services/twilio/messaging";
-import { replyTo } from "../../services/openai/text-agent";
+import { respond } from "../../agent/brain";
 import { getHistory, append } from "./memory";
 
 function readBody(req: http.IncomingMessage): Promise<string> {
@@ -46,8 +46,8 @@ async function main() {
     console.log(`\n✉️  ${from}: ${text}`);
     let reply = "Sorry, something went wrong.";
     try {
+      reply = await respond(text, { channel: "sms", from, history: getHistory(from) });
       append(from, { role: "user", content: text });
-      reply = await replyTo(getHistory(from));
       append(from, { role: "assistant", content: reply });
       console.log(`🤖 → ${from}: ${reply}`);
     } catch (err) {

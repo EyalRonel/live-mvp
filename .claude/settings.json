@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx ts-node *)",
+      "Bash(pkill -f \"src/channels/.*index.ts\")",
+      "Bash(pkill -f ngrok)"
+    ]
+  }
+}

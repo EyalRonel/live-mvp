@@ -1,7 +1,8 @@
 import { DEBUG, requireEnv } from "../../shared/config";
 import { startTunnel } from "../../shared/tunnel";
-import { buildSystemPrompt, WAKE_TERMS } from "../../shared/persona";
+import { WAKE_TERMS } from "../../shared/persona";
 import { bridge } from "../../core/bridge";
+import { respond } from "../../agent/brain";
 import { RealtimeAgent } from "../../services/openai/realtime-agent";
 import { createBot, leaveBot, SAMPLE_RATE } from "../../services/meetingbaas/client";
 import { MeetTransport } from "./meet-transport";
@@ -59,9 +60,10 @@ async function main() {
   transport.once("connected", async () => {
     console.log("Bot admitted, starting conversation");
     agent = new RealtimeAgent({
-      instructions: buildSystemPrompt("meet"),
+      respond, // the shared brain
+      channel: "meet",
+      from: "meeting",
       audioFormat: { kind: "pcm16", rate: 24000 },
-      voice: "alloy",
       wakeWord: { terms: WAKE_TERMS }, // Meet: only respond when addressed by name
     });
     try {
