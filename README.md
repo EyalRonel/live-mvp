@@ -1,90 +1,93 @@
-# live-mvp — Google Meet voice agent
+# live-mvp — multi-channel voice/text AI agent
 
-A minimal Node.js + TypeScript voice agent that sends a bot into a Google Meet
-via [MeetingBaaS](https://meetingbaas.com) and holds a real-time voice
-conversation using the [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime).
+One AI persona, reachable over three channels — each with its own entry point:
 
-Voice in, voice out. No video, no chat, no tools, no UI.
+- **Google Meet** — a bot ([MeetingBaaS](https://meetingbaas.com)) joins the meeting
+  and talks via the [OpenAI Realtime API](https://platform.openai.com/docs/guides/realtime).
+- **Phone** ([Twilio](https://twilio.com) Voice) — call the agent's number (or have
+  it call you) and talk, also via the Realtime API. Inbound **and** outbound.
+- **SMS** (Twilio Messaging) — text the number and get LLM replies; can also send a
+  one-off outbound text.
 
-## How it works
+Voice channels stream audio with **no transcoding** (each side's format matches
+OpenAI's: PCM16/24 kHz for Meet, G.711 μ-law/8 kHz for phone).
 
-MeetingBaaS streams the meeting's mixed audio to a WebSocket **server that this
-app hosts**, and plays back any audio we send to that same socket. Both sides use
-PCM16 mono @ 24 kHz — identical to the OpenAI Realtime API — so no resampling.
+## Project structure
 
 ```
-Google Meet ─▶ MeetingBaaS ─(binary PCM16)─▶ our WS server ─(base64)─▶ OpenAI Realtime
-Google Meet ◀─ MeetingBaaS ◀─(binary PCM16)─ our WS server ◀─(base64)─ OpenAI Realtime
+src/
+  channels/          # one folder per channel — the entry points you run
+    google-meet/     index.ts + meet-transport.ts
+    phone-call/      index.ts + call-transport.ts
+    sms/             index.ts + memory.ts
+  services/          # reusable provider integrations
+    twilio/          client (REST), media-stream framing, messaging, twiml   (phone + sms)
+    meetingbaas/     client (REST) + audio-socket (WS server)                (meet)
+    openai/          realtime-agent (voice) + text-agent (sms)               (all)
+  core/              voice-transport (interface) + bridge (wires audio)
+  shared/            persona, config, tunnel
 ```
 
-Because MeetingBaaS (cloud) must reach your machine, the local WS server is
-exposed through a public tunnel (ngrok).
-
-- `index.ts` — entry point: opens the tunnel, creates the bot, bridges audio.
-- `meeting-bot.ts` — MeetingBaaS REST (create/leave) + the audio WebSocket server.
-- `agent.ts` — OpenAI Realtime WebSocket connection, session config, transcripts.
+To understand a channel, open `channels/<x>/index.ts`; the provider mechanics it
+calls live under `services/`. Adding a channel = a new `channels/<name>/` folder.
 
 ## Setup
 
-1. Install dependencies:
-
-   ```bash
-   npm install
-   ```
-
-2. Create your `.env` from the template and fill in keys:
-
-   ```bash
-   cp .env.example .env
-   # edit .env
-   ```
-
-   | Variable          | Required | Notes                                                        |
-   | ----------------- | -------- | ------------------------------------------------------------ |
-   | `OPENAI_API_KEY`  | yes      | Needs billing enabled + access to the `gpt-realtime` (GA) model. |
-   | `BAAS_API_KEY`    | yes      | From your MeetingBaaS dashboard.                             |
-   | `NGROK_AUTHTOKEN` | yes\*    | Free at dashboard.ngrok.com — opens the tunnel automatically.|
-   | `PUBLIC_WS_URL`   | no       | Use instead of ngrok if you run your own tunnel.            |
-   | `PORT`            | no       | Local WS server port, default `8080`.                        |
-   | `AGENT_NAME`      | no       | Agent's name + wake word, default `Rall`.                    |
-   | `AGENT_ALIASES`   | no       | Comma-separated wake-word variants for STT mishears.        |
-
-   \* Either `NGROK_AUTHTOKEN` **or** `PUBLIC_WS_URL` is required.
-
-## Run
-
 ```bash
-npx ts-node index.ts https://meet.google.com/xxx-yyyy-zzz
+npm install
+cp .env.example .env   # then fill it in
 ```
 
-Then:
+| Variable | Needed for | Notes |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | all | Billing enabled; access to `gpt-realtime` + a text model. |
+| `BAAS_API_KEY` | meet | MeetingBaaS dashboard. |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | phone, sms | Twilio console. |
+| `TWILIO_PHONE_NUMBER` | phone, sms | E.164, voice+SMS capable (e.g. `+19787658615`). |
+| `NGROK_AUTHTOKEN` | all | Free at ngrok.com — opens the public tunnel. (Or set `PUBLIC_WS_URL`.) |
+| `AGENT_NAME` / `AGENT_ALIASES` | optional | Name + wake-word variants (default `Rally`). |
+| `SMS_MODEL`, `PORT`, `PHONE_PORT`, `SMS_PORT` | optional | Sensible defaults. |
 
-1. Start (or join) the Google Meet yourself in a browser.
-2. The app opens a tunnel, then prints **"Bot created, waiting to be admitted to the meeting"**.
-3. **Admit the bot from the waiting room** — it appears as "Rall".
-   When it joins and starts streaming, the app prints **"Bot admitted, starting conversation"**.
-4. Talk. The bot is named **Rall** and only replies when you address it by name
-   (e.g. "Rall, what's on the agenda?"). Transcripts of both sides print to the
-   console, with a note on whether each turn was addressed to Rall.
-5. `Ctrl+C` to stop — the WebSocket closes, the OpenAI session ends, and the bot
-   leaves the call.
+> **ngrok free tier allows one tunnel at a time**, so run one channel per machine.
+> Each run auto-points the relevant Twilio/MeetingBaaS webhook at the current
+> tunnel URL, so you never reconfigure webhooks by hand.
 
-> ⚠️ **Someone must admit the bot from the waiting room.** Until a human in the
-> Meet lets it in, MeetingBaaS won't connect and you'll stay on "waiting".
+## Running
 
-## Audio format
+### Google Meet
+```bash
+npm run meet -- https://meet.google.com/xxx-yyyy-zzz
+```
+Join the Meet yourself, then **admit the bot from the waiting room** (it appears as
+your `AGENT_NAME`). It only replies when **addressed by name** (e.g. "Rally, …").
 
-PCM16, mono, 24 kHz on both sides (MeetingBaaS `audio_frequency: 24000` and the
-OpenAI Realtime API native rate). Binary frames, no headers. If you change the
-MeetingBaaS frequency you must resample before forwarding to OpenAI.
+### Phone
+```bash
+npm run phone                  # inbound: wait for calls to your number
+npm run phone -- +15551234567  # outbound: the agent calls that number
+```
+Natural conversation — it greets on connect and supports barge-in (interrupt it
+and it stops talking). Console shows `🗣️ Human` / `🤖 Agent` transcripts.
 
-## Protocol notes
+### SMS
+```bash
+npm run sms                              # inbound: reply to texts sent to your number
+npm run sms -- +15551234567 "hi there"  # outbound: send that literal text, then exit
+```
+Inbound mode keeps short per-sender memory so follow-ups have context.
 
-- MeetingBaaS v2: `POST https://api.meetingbaas.com/v2/bots` with
-  `streaming_enabled` + `streaming_config { output_url, input_url, audio_frequency }`,
-  auth header `x-meeting-baas-api-key`. Using the **same URL** for input and
-  output gives one bidirectional socket.
-- On connect, the bot sends a JSON handshake, then binary PCM audio chunks every
-  100 ms, plus JSON speaker-state arrays. We treat binary as audio and text as
-  metadata.
-- Server-side VAD (`server_vad`) handles turn-taking and barge-in.
+> **Twilio trial accounts** can only call/text **verified** numbers and add a trial
+> notice — upgrade to remove both. Outbound is a manual trigger (the agent doesn't
+> autonomously decide to reach out — that'd be a tool/MCP feature).
+
+## How a voice channel works
+
+```
+caller/meeting ─audio─▶ transport ─appendAudio─▶ OpenAI Realtime   (uplink: human → AI)
+caller/meeting ◀─audio─ transport ◀────audio──── OpenAI Realtime   (downlink: AI → human)
+```
+
+A `VoiceTransport` (Meet or Twilio) carries audio frames; `bridge(transport, agent)`
+wires both directions plus barge-in and teardown. The same `RealtimeAgent` powers
+Meet and phone — only its config differs (audio format, wake-word vs. natural,
+greeting). See `src/core/`.

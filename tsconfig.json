@@ -13,5 +13,5 @@
   "ts-node": {
     "transpileOnly": true
   },
-  "include": ["*.ts"]
+  "include": ["src/**/*.ts"]
 }

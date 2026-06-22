@@ -1,14 +1,18 @@
 {
   "name": "live-mvp",
   "version": "1.0.0",
-  "description": "Minimal voice agent that joins a Google Meet via MeetingBaaS and talks using the OpenAI Realtime API",
-  "main": "index.ts",
+  "description": "Multi-channel voice/text AI agent — Google Meet, phone (Twilio), and SMS, on the OpenAI Realtime + text APIs",
+  "main": "src/channels/google-meet/index.ts",
   "scripts": {
-    "start": "ts-node index.ts"
+    "meet": "ts-node src/channels/google-meet/index.ts",
+    "phone": "ts-node src/channels/phone-call/index.ts",
+    "sms": "ts-node src/channels/sms/index.ts",
+    "start": "ts-node src/channels/google-meet/index.ts"
   },
   "dependencies": {
     "@ngrok/ngrok": "^1.4.1",
     "dotenv": "^16.4.5",
+    "twilio": "^5.13.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {
