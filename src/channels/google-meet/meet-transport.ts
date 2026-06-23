@@ -1,36 +1,52 @@
 import { EventEmitter } from "events";
+import WebSocket from "ws";
 import { VoiceTransport, AudioFormat } from "../../core/voice-transport";
-import { MeetingAudioServer } from "../../services/meetingbaas/audio-socket";
-import { SAMPLE_RATE } from "../../services/meetingbaas/client";
 
 /**
- * Adapts the MeetingBaaS audio socket to the generic VoiceTransport interface.
- * MeetingBaaS already sends/receives raw PCM16 Buffers, so this is a thin rename
- * of events (connected/audio/disconnected -> connected/audio/closed) plus the
- * declared `format`. Extra Meet-only events (handshake/speakers) are re-emitted
- * for the entry point to log.
+ * Adapts a MeetingBaaS audio WebSocket (already upgraded by the gateway) to the
+ * generic VoiceTransport. MeetingBaaS sends raw PCM16 binary frames + JSON text
+ * frames (one-time handshake, then speaker-state arrays). Mirrors CallTransport.
+ *
+ * Emits: "audio"(Buffer) | "handshake"(msg) | "speakers"(arr) | "closed" | "error".
  */
 export class MeetTransport extends EventEmitter implements VoiceTransport {
-  readonly format: AudioFormat = { kind: "pcm16", rate: SAMPLE_RATE as 24000 };
-  private server: MeetingAudioServer;
+  readonly format: AudioFormat = { kind: "pcm16", rate: 24000 };
+  private gotHandshake = false;
 
-  constructor(port: number) {
+  constructor(private ws: WebSocket) {
     super();
-    this.server = new MeetingAudioServer(port);
-    this.server.on("connected", () => this.emit("connected"));
-    this.server.on("audio", (b: Buffer) => this.emit("audio", b));
-    this.server.on("disconnected", () => this.emit("closed"));
-    this.server.on("error", (e) => this.emit("error", e));
-    // Meet-specific extras, surfaced for logging.
-    this.server.on("handshake", (m) => this.emit("handshake", m));
-    this.server.on("speakers", (a) => this.emit("speakers", a));
+    ws.on("message", (data: WebSocket.RawData, isBinary: boolean) => {
+      if (isBinary) {
+        this.emit("audio", data as Buffer);
+        return;
+      }
+      let msg: any;
+      try {
+        msg = JSON.parse(data.toString());
+      } catch {
+        return;
+      }
+      if (Array.isArray(msg)) {
+        this.emit("speakers", msg);
+      } else if (!this.gotHandshake) {
+        this.gotHandshake = true;
+        this.emit("handshake", msg);
+      }
+    });
+    ws.on("close", () => this.emit("closed"));
+    ws.on("error", (err) => this.emit("error", err));
   }
 
+  /** Send PCM16 mono @ 24kHz into the meeting (binary frame). */
   sendAudio(buf: Buffer): void {
-    this.server.sendAudio(buf);
+    if (this.ws.readyState === WebSocket.OPEN) this.ws.send(buf, { binary: true });
   }
 
   close(): void {
-    this.server.close();
+    try {
+      this.ws.close();
+    } catch {
+      // ignore
+    }
   }
 }

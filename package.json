@@ -4,6 +4,7 @@
   "description": "Multi-channel voice/text AI agent — Google Meet, phone (Twilio), and SMS, on the OpenAI Realtime + text APIs",
   "main": "src/channels/google-meet/index.ts",
   "scripts": {
+    "gateway": "ts-node src/gateway/index.ts",
     "meet": "ts-node src/channels/google-meet/index.ts",
     "phone": "ts-node src/channels/phone-call/index.ts",
     "sms": "ts-node src/channels/sms/index.ts",
@@ -13,10 +14,12 @@
   "dependencies": {
     "@ngrok/ngrok": "^1.4.1",
     "dotenv": "^16.4.5",
+    "express": "^4.22.2",
     "twilio": "^5.13.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/express": "^4.17.25",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
     "ts-node": "^10.9.2",

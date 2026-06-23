@@ -1,25 +1,35 @@
-import http from "http";
 import { requireEnv } from "../../shared/config";
-import { startTunnel } from "../../shared/tunnel";
 import { setSmsWebhook, sendSms } from "../../services/twilio/client";
-import { parseInboundSms, messageTwiml } from "../../services/twilio/messaging";
+import { messageTwiml } from "../../services/twilio/messaging";
 import { respond } from "../../agent/brain";
 import { getHistory, append } from "./memory";
+import { Gateway, createGateway } from "../../gateway/server";
 
-function readBody(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve) => {
-    let data = "";
-    req.on("data", (c) => (data += c));
-    req.on("end", () => resolve(data));
+export function mountSms(gw: Gateway): void {
+  // Twilio messaging webhook -> brain -> TwiML <Message> reply.
+  gw.app.post("/sms", async (req, res) => {
+    const from = (req.body?.From as string) || "";
+    const text = ((req.body?.Body as string) || "").trim();
+    console.log(`\n✉️  ${from}: ${text}`);
+    let reply = "Sorry, something went wrong.";
+    try {
+      reply = await respond(text, { channel: "sms", from, history: getHistory(from) });
+      append(from, { role: "user", content: text });
+      append(from, { role: "assistant", content: reply });
+      console.log(`🤖 → ${from}: ${reply}`);
+    } catch (err) {
+      console.error("SMS reply failed:", err);
+    }
+    res.type("text/xml").send(messageTwiml(reply));
   });
 }
 
+// Standalone: `npm run sms` (inbound) or `npm run sms -- <number> <message>` (outbound).
 async function main() {
   requireEnv("TWILIO_ACCOUNT_SID");
   requireEnv("TWILIO_AUTH_TOKEN");
   requireEnv("TWILIO_PHONE_NUMBER");
 
-  // Outbound mode: `npm run sms -- <number> <message...>` sends a literal text and exits.
   const to = process.argv[2];
   const message = process.argv.slice(3).join(" ");
   if (to) {
@@ -32,48 +42,20 @@ async function main() {
     process.exit(0);
   }
 
-  // Inbound mode: run the webhook server and reply with the LLM.
   requireEnv("OPENAI_API_KEY");
-  const port = parseInt(process.env.SMS_PORT || "8082", 10);
-
-  const server = http.createServer(async (req, res) => {
-    if (req.method !== "POST" || !req.url?.startsWith("/sms")) {
-      res.writeHead(404);
-      res.end();
-      return;
-    }
-    const { from, text } = parseInboundSms(await readBody(req));
-    console.log(`\n✉️  ${from}: ${text}`);
-    let reply = "Sorry, something went wrong.";
-    try {
-      reply = await respond(text, { channel: "sms", from, history: getHistory(from) });
-      append(from, { role: "user", content: text });
-      append(from, { role: "assistant", content: reply });
-      console.log(`🤖 → ${from}: ${reply}`);
-    } catch (err) {
-      console.error("SMS reply failed:", err);
-    }
-    res.writeHead(200, { "Content-Type": "text/xml" });
-    res.end(messageTwiml(reply));
-  });
-
-  await new Promise<void>((resolve) => server.listen(port, resolve));
-  const { url } = await startTunnel(port);
-  const smsUrl = `${url}/sms`;
+  const gw = createGateway(parseInt(process.env.SMS_PORT || "8082", 10));
+  mountSms(gw);
+  await gw.start();
+  const smsUrl = `${gw.urls.https}/sms`;
   await setSmsWebhook(smsUrl);
   console.log(`SMS webhook set to ${smsUrl}`);
   console.log(`✉️  Ready. Text ${process.env.TWILIO_PHONE_NUMBER} to chat. (Ctrl+C to stop)`);
-
-  const shutdown = () => {
-    console.log("\nShutting down...");
-    server.close();
-    process.exit(0);
-  };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", () => process.exit(0));
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error("Fatal error:", err);
+    process.exit(1);
+  });
+}
